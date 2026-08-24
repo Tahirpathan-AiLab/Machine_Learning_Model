@@ -1,4 +1,4 @@
-## Code Description
+## Code Description 
 
 This project focuses on transforming cleaned wearable sensor data into meaningful machine learning features that can accurately represent different barbell exercises performed by athletes. Using accelerometer and gyroscope measurements collected from **MetaMotion wearable fitness tracking bands**, the project builds a complete feature engineering pipeline capable of converting raw time-series signals into informative statistical, temporal, frequency-domain, and clustering features.
 
