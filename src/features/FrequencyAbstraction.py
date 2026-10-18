@@ -16,19 +16,19 @@ import numpy as np
 # often and filter noise.
 class FourierTransformation:
 
-    # Find the amplitudes of the different frequencies using a fast fourier transformation. Here,
-    # the sampling rate expresses the number of samples per second (i.e. Frequency is Hertz of the dataset).
+    # Find the magnitudes of the positive-frequency components using a fast Fourier transform.
     def find_fft_transformation(self, data, sampling_rate):
-        # Create the transformation, this includes the amplitudes of both the real
-        # and imaginary part.
-        transformation = np.fft.rfft(data, len(data))
-        return transformation.real, transformation.imag
+        transformation = np.fft.rfft(data, n=len(data))
+        return np.abs(transformation)
 
     # Get frequencies over a certain window.
     def abstract_frequency(self, data_table, cols, window_size, sampling_rate):
+        if not isinstance(window_size, int) or isinstance(window_size, bool) or window_size <= 0:
+            raise ValueError("window_size must be a positive integer.")
+        if sampling_rate <= 0:
+            raise ValueError("sampling_rate must be positive.")
 
-        # Create new columns for the frequency data.
-        freqs = np.round((np.fft.rfftfreq(int(window_size)) * sampling_rate), 3)
+        freqs = np.round(np.fft.rfftfreq(window_size) * sampling_rate, 3)
 
         for col in cols:
             data_table[col + "_max_freq"] = np.nan
@@ -39,31 +39,41 @@ class FourierTransformation:
                     col + "_freq_" + str(freq) + "_Hz_ws_" + str(window_size)
                 ] = np.nan
 
-        # Pass over the dataset (we cannot compute it when we do not have enough history)
-        # and compute the values.
-        for i in range(window_size, len(data_table.index)):
+        # Start once a complete window is available; use exactly window_size samples.
+        for i in range(window_size, len(data_table.index) + 1):
             for col in cols:
-                real_ampl, imag_ampl = self.find_fft_transformation(
-                    data_table[col].iloc[
-                        i - window_size : min(i + 1, len(data_table.index))
-                    ],
-                    sampling_rate,
-                )
-                # We only look at the real part in this implementation.
-                for j in range(0, len(freqs)):
-                    data_table.loc[
-                        i, col + "_freq_" + str(freqs[j]) + "_Hz_ws_" + str(window_size)
-                    ] = real_ampl[j]
-                # And select the dominant frequency. We only consider the positive frequencies for now.
+                window = data_table[col].iloc[i - window_size:i].to_numpy(dtype=float)
+                if not np.all(np.isfinite(window)):
+                    continue
 
-                data_table.loc[i, col + "_max_freq"] = freqs[
-                    np.argmax(real_ampl[0 : len(real_ampl)])
+                amplitudes = self.find_fft_transformation(window, sampling_rate)
+                for j, freq in enumerate(freqs):
+                    data_table.loc[
+                        data_table.index[i - 1],
+                        col + "_freq_" + str(freq) + "_Hz_ws_" + str(window_size),
+                    ] = amplitudes[j]
+
+                # A zero-energy window has no meaningful dominant or weighted frequency.
+                total_amplitude = np.sum(amplitudes)
+                if total_amplitude <= 0 or not np.isfinite(total_amplitude):
+                    continue
+
+                data_table.loc[data_table.index[i - 1], col + "_max_freq"] = freqs[
+                    int(np.argmax(amplitudes))
                 ]
-                data_table.loc[i, col + "_freq_weighted"] = float(
-                    np.sum(freqs * real_ampl)
-                ) / np.sum(real_ampl)
-                PSD = np.divide(np.square(real_ampl), float(len(real_ampl)))
-                PSD_pdf = np.divide(PSD, np.sum(PSD))
-                data_table.loc[i, col + "_pse"] = -np.sum(np.log(PSD_pdf) * PSD_pdf)
+                data_table.loc[
+                    data_table.index[i - 1], col + "_freq_weighted"
+                ] = float(np.sum(freqs * amplitudes) / total_amplitude)
+
+                psd = np.square(amplitudes) / len(amplitudes)
+                total_psd = np.sum(psd)
+                if total_psd <= 0 or not np.isfinite(total_psd):
+                    continue
+
+                psd_pdf = psd / total_psd
+                nonzero_probabilities = psd_pdf[psd_pdf > 0]
+                data_table.loc[data_table.index[i - 1], col + "_pse"] = -np.sum(
+                    nonzero_probabilities * np.log(nonzero_probabilities)
+                )
 
         return data_table
